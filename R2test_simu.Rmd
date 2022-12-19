@@ -1,0 +1,717 @@
+---
+title: "R-squared method hypothesis testing"
+output: html_document
+date: "2022-10-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# set directory
+setwd("D:/Projects/Casual-Rsquared")
+
+# all the packages needed
+pkgs_list <- c("ggplot2", "ggpubr", "cowplot")
+
+## check existence and install
+idx <- sapply(pkgs_list, function(x) x %in% installed.packages())
+if(any(!idx)){
+  install.packages(pkgs_list[!idx])
+}
+
+sapply(pkgs_list, function(x) library(x, character.only = TRUE, quietly = T))
+```
+
+## Hypothesis testing based on normality Assumption
+
+Consider the model when $X\rightarrow Y$, 
+$$X = \beta_{X0} + \beta_{X\mathbf{g}}\mathbf{g} + \beta_{XU} U + \epsilon_X$$
+$$Y = \beta_{Y0} + \beta_{YX} X + \beta_{YU}U + \epsilon_Y$$
+where $\epsilon__X\sim N(0, \sigma_X^2), \epsilon_Y \sim N(0, \sigma_Y^2)$. Therefore, 
+$$\boldsymbol{\beta}_{X\mathbf{g}}^T\mathbf{G}_1^T\mathbf{G}_1\boldsymbol{\beta}_{X\mathbf{g}} / \sigma_X^2 \sim \chi^2_M(\lambda_{X\mathbf{g}}), \lambda_{X\mathbf{g}} = \boldsymbol{\beta}_{X\mathbf{g}}^T\mathbf{G}_1^T\mathbf{G}_1\boldsymbol{\beta}_{X\mathbf{g}} $$
+$$\boldsymbol{\epsilon}_X^T\boldsymbol{\epsilon}_X /\sigma_X^2 \sim \chi_{n_1-M - 1}^2$$
+Then we have the following, 
+$$\frac{R_{X\mathbf{g}}^2 / M}{(1 - R^2_{X\mathbf{g}})/(n_1 - M - 1)}\sim F_{M, n_1 - M - 1}(\lambda_{X\mathbf{g}})$$
+$$\frac{R_{Y\mathbf{g}}^2 / M}{(1 - R^2_{Y\mathbf{g}})/(n_1 - M - 1)}\sim F_{M, n_2 - M - 1}(\lambda_{Y\mathbf{g}})$$
+where
+$$\lambda_{X\mathbf{g}} = \frac{\boldsymbol{\beta}_{X\mathbf{g}}^T\mathbf{G}_1^T\mathbf{G}_1\boldsymbol{\beta}_{X\mathbf{g}}}{\sigma_X^2}$$
+$$\lambda_{Y\mathbf{g}} = \frac{\beta_{YX}^2\boldsymbol{\beta}_{X\mathbf{g}}^T\mathbf{G}_2^T\mathbf{G}_2\boldsymbol{\beta}_{X\mathbf{g}}}{\sigma_Y^2 + \beta_{YX}^2\sigma_X^2}$$
+When $n_1 \approx n_2$, we can simply consider the hypothesis testing, 
+$$H0: \lambda_{Xg} <=\lambda_{Yg}, \quad H1: \lambda_{Xg} > \lambda_{Yg}$$
+Consider $x\sim F_{m, n_1}(\lambda_{Xg}), y \sim F_{m, n_2}(\lambda_{Yg})$. 
+
+### $n_1 = n_2$
+Start with the simplest case when $n_1 = n_2 = n$. 
+Steps: 
+1. Generate $N$ samples from two F distributions
+2. Compute statistic $z = \frac{x-y}{\sigma}$ with $\sigma = \frac{2n}{m}\sqrt{\frac{(m + \lambda_{Xg})^2 + (m + 2\lambda_{Xg})(n - 2)}{(n-2)^2 (n - 4)}}$
+3. Compare $z$ with $Z_{1 - \alpha}$
+4. Calculate the type I error and power (1 - Type II error). 
+
+```{r f mean and std, eval=TRUE, echo=FALSE, include=FALSE}
+f_mu_var <- function(n, m, lambda){
+  if(m > 2){
+    mu <- m * (n + lambda) / (n * (m - 2))
+    if(m > 4){
+      sigma <- 2 * ((n + lambda)^2 + (n + 2 * lambda) * (m - 2))/((m - 2)^2 * (m - 4)) * (m / n)^2
+    }else{
+      sigma <- NA
+    }
+  }else{
+    mu <- NA
+    sigma <- NA
+  }
+  
+  return(c(mu, sigma))
+}
+```
+
+#### Check the distribution of two noncentral F distributions
+Set the number of SNPs as $m = 100$ and sample size $n_1 = n_2 = n = 1000$. Consider $\lambda_{Xg} = c(1, 3, 5, 8, 10)$ and $\lambda_{Yg} = 5$. The number of replicates being $10000$. Type I error under H0 and power under alternative hypothesis are given and the histogram for the p-values and statistics for each setting is plotted. 
+
+```{r difference of two Fs, echo=FALSE, eval=TRUE, include=FALSE}
+m <- 10
+n <- 1000
+lbd1 <- 5
+lbd2 <- c(1, 3, 5, 8, 10)
+reps <- 10000
+alp <- 0.05
+
+res <- array(NA, dim = c(length(lbd2), reps, 4), dimnames = list(lbd2, 1:reps, c("diff", "pval",  "stat", "idx")))
+type_I_II_err <- matrix(NA, nrow = length(lbd2), ncol = 2)
+type_I_II_err[, 1] <- lbd2
+rownames(type_I_II_err) <- ifelse(lbd2 > lbd1, "beta", "alpha")
+colnames(type_I_II_err) <- c("lambda", "error")
+
+for (k in 1:length(lbd2)) {
+  y <- rf(reps, m, n, lbd1)
+  x <- rf(reps, m, n, lbd2[k])
+  ds <- x - y
+  sigma <- sqrt(2 * f_mu_var(m, n, lbd1)[2])
+  stat <- ds / sigma
+  res[k, , 1] <- ds
+  res[k, , 2] <- pnorm(stat)
+  res[k, , 3] <- stat
+  res[k, , 4] <- pnorm(stat) > (1 - alp)
+  type_I_II_err[k, 2] <- ifelse(lbd2[k] > lbd1, sum(res[k, , 4] == 0)/reps, sum(res[k, , 4]) / reps)
+}
+
+```
+
+```{r, eval=TRUE, include=FALSE, echo=FALSE}
+print(type_I_II_err)
+```
+
+```{r fig normal same n, echo=FALSE, include=FALSE, eval=TRUE, fig.height=5, fig.width=15}
+c1 <- rgb(173,216,230, max = 255, alpha = 80, names = "lt.blue")
+c2 <- rgb(255,192,203, max = 255, alpha = 80, names = "lt.pink")
+
+par(mfrow = c(1, 3))
+for (i in 1:length(lbd2)) {
+  print(paste("lambda = ", lbd2[i], sep = ""))
+  hist(res[i, , 2], breaks = 20, main = "Histogram of p-values", col = c1, freq = FALSE)
+  hist(res[i, , 3], breaks = 20, main = "Histogram of statistics", col = c2, freq = FALSE)
+  qqnorm(res[i, , 2])
+  qqline(res[i, , 2], col = 2, lty = 2)
+}
+
+```
+We can tell that the distribution of the p-values changes with the growth of $\lambda_{Xg}$. When it's smaller than $\lambda_{Yg}$, it has a right-skewed distribution and the right-skewness reduces with the rise of $\lambda_{Xg}$. It's close to uniform when two non-centrality parameters are equal. And the distribution gets more left-skewed as $\lambda_{Xg}$ keeps increasing. While the power is rather small, more specifically around $0.07 0.09$, which is not ideal for testing. 
+
+### $n_1 \neq n_2$ 
+Consider different combination of $n_1$ and $n_2$.
+
+#### Simply change the sd
+
+```{r normal, echo=FALSE, eval=TRUE, include=FALSE}
+m <- 10
+n1 <- 1000
+n2 <- c(100, 300, 500, 800, 1000, 1200, 1500, 1700, 2000)
+lbd1 <- 5
+lbd2 <- c(1, 3, 5, 8, 10)
+reps <- 5000
+alp <- 0.05
+
+res <- array(NA, dim = c(length(n2), length(lbd2), reps, 4), dimnames = list(n2, lbd2, 1:reps, c("diff", "pval",  "stat", "idx")))
+type_I_II_err <- array(NA, dim = c(length(n2), length(lbd2)))
+rownames(type_I_II_err) <- n2
+colnames(type_I_II_err) <- lbd2
+
+for (i in 1:length(n2)) {
+  for (k in 1:length(lbd2)) {
+    y <- rf(reps, m, n1, lbd1)
+    x <- rf(reps, m, n2[i], lbd2[k])
+    ds <- x - y
+    sigma <- sqrt(f_mu_var(m, n1, lbd1)[2] + f_mu_var(m, n2[i], lbd2[k])[2])
+    stat <- ds / sigma
+    res[i, k, , 1] <- ds
+    res[i, k, , 2] <- pnorm(stat)
+    res[i, k, , 3] <- stat
+    res[i, k, , 4] <- pnorm(stat) > (1 - alp)
+    type_I_II_err[i, k] <- ifelse((lbd2[k] + m)/(n2[i] - m - 3) > (lbd1 + m)/(n1 - m - 3), sum(res[i, k, , 4] == 0)/reps, sum(res[i, k, , 4]) / reps)
+    # type_I_II_err[i, k] <- ifelse(lbd2[k]/n2[i] > lbd1 / n1, sum(res[i, k, , 4] == 0)/reps, sum(res[i, k, , 4]) / reps)
+  }
+}
+```
+
+```{r different n2, eval=TRUE, echo=FALSE, include=FALSE}
+print(type_I_II_err)
+```
+We can see similar patterns. However when $\lambda_{Xg} < \lambda_{Yg}$ and $n_1 < n_2$, the type I error is rather higher, while when $n_1$ stays small and $\lambda_{Xg}$ grows to value larger than $\lambda_{Yg}$, it has slightly higher power. When two sample sizes are close or when $n_1$ larger than $n_1$, the patterns are similar as those above when $n_1 = n_2$. The growth difference of $\lambda_{Xg} - \lambda_{Yg}$ improves the power. However, they're not high enough for hypothesis testing. 
+
+```{r fig normal different n, echo=FALSE, include=FALSE, eval=TRUE, fig.height=25, fig.width=15}
+c1 <- rgb(173,216,230, max = 255, alpha = 80, names = "lt.blue")
+c2 <- rgb(255,192,203, max = 255, alpha = 80, names = "lt.pink")
+
+par(mfrow = c(5, 3))
+for(i in 1:length(n2)){
+  for (k in 1:length(lbd2)) {
+    print(paste("n2 = ", n2[i], " | lambda = ", lbd2[k], sep = ""))
+    hist(res[i, k, , 2], breaks = 20, main = "Histogram of p-values", col = c1, freq = FALSE)
+    hist(res[i, k, , 3], breaks = 20, main = "Histogram of statistics", col = c2, freq = FALSE)
+    qqnorm(res[i, k, , 2])
+    qqline(res[i, k, , 2], col = 2, lty = 2)
+  }
+}
+
+```
+
+
+### Consider a different way of comparing two noncentral F distributions
+```{r intro nu, eval=TRUE, echo=FALSE, include=FALSE}
+m <- 10
+n1 <- 1000
+n2 <- c(100, 300, 500, 800, 1000, 1200, 1500, 1700, 2000)
+nu <- 5/1000
+
+reps <- 5000
+res <- array(NA, dim = c(length(n2), reps, 4), dimnames = list(n2, 1:reps, c("diffs", "pvals", "stat", "idx")))
+type_I_II_err <- matrix(NA, nrow = length(n2), ncol = 2)
+type_I_II_err[, 1] <- n2
+rownames(type_I_II_err) <- ifelse(nu * n2 > nu * n1, "beta", "alpha")
+colnames(type_I_II_err) <- c("lambda", "error")
+
+for (i in 1:length(n2)) {
+  lbd1 <- nu * n1
+  lbd2 <- nu * n2[i]
+  y <- rf(reps, m, n1, lbd1)
+  x <- rf(reps, m, n2[i], lbd2)
+  ds <- x - y
+  sigma <- sqrt(f_mu_var(m, n1, (lbd1 + lbd2) / 2)[2] * 2)
+  stat <- ds / sigma
+  res[i, , 1] <- ds
+  res[i, , 2] <- pnorm(stat)
+  res[i, , 3] <- stat
+  res[i, , 4] <- stat > qnorm(1 - alp)
+  type_I_II_err[i, 2] <- ifelse((lbd2 + m)/(n2[i] - m - 3) > (lbd1 + m)/(n1 - m - 3), sum(res[i, , 4] == 0)/reps, sum(res[i, , 4]) / reps)
+}
+```
+
+```{r different n2 with nu, eval=TRUE, echo=FALSE, include=FALSE}
+print(type_I_II_err)
+```
+
+```{r fig normal different n2 with nu, echo=FALSE, include=FALSE, eval=TRUE, fig.height=5, fig.width=15}
+c1 <- rgb(173,216,230, max = 255, alpha = 80, names = "lt.blue")
+c2 <- rgb(255,192,203, max = 255, alpha = 80, names = "lt.pink")
+
+par(mfrow = c(1, 3))
+for (i in 1:length(n2)) {
+  print(paste("n2 = ", n2[i], sep = ""))
+  hist(res[i, , 2], breaks = 20, main = "Histogram of p-values", col = c1, freq = FALSE)
+  hist(res[i, , 3], breaks = 20, main = "Histogram of statistics", col = c2, freq = FALSE)
+  qqnorm(res[i, , 2])
+  qqline(res[i, , 2], col = 2, lty = 2)
+}
+
+```
+
+### Consider other testing distribution
+#### Based on $\frac{R^2}{1-R^2} = E \times \frac{n-m-1}{m}$
+Consider the statistic
+$$\frac{\frac{mx}{n_1 - m - 1} - \frac{my}{n_2 - m - 1}}{\sqrt{\frac{m^2}{(n_1 - m - 1)^2}\text{var}(x)+\frac{m^2}{(n_2 - m - 1)^2}\text{var}(y)}}$$
+
+```{r constant times E, echo=FALSE, include=FALSE, eval=TRUE}
+m <- 10
+n1 <- 1000
+n2 <- c(100, 300, 500, 800, 1000, 1200, 1500, 1700, 2000)
+lbd1 <- 8
+lbd2 <- c(1, 3, 5, 8, 10, 13, 15)
+alp <- 0.05
+
+reps <- 5000
+type_I_II_err <- array(NA, dim = c(length(n2), length(lbd2)), dimnames = list(n2, lbd2))
+figs <- vector("list", length(n2))
+figs2 <- vector("list", length(n2))
+stats_df <- data.frame(n = integer(length(n2) * length(lbd2) * reps), lbd = double(length(n2) * length(lbd2) * reps), stats = double(length(n2) * length(lbd2) * reps))
+stats_df$n <- rep(n2, each = length(lbd2) * reps)
+stats_df$lbd <- rep(rep(lbd2, each = reps), length(n2))
+cols <- sapply(rainbow(length(n2)), function(x) paste(x, "46", sep = ""))
+stats_vec <- NULL
+
+
+par(mfrow = c(length(n2), length(lbd2)), mar = c(1, 1, 1, 1))
+for(i in 1:length(n2)){
+  figs[[i]] <- vector("list", length(lbd2))
+  figs2[[i]] <- vector("list", length(lbd2))
+  for (j in 1:length(lbd2)) {
+    y <- rf(reps, m, n1, lbd1)
+    x <- rf(reps, m, n2[i], lbd2[j])
+    stats <- (x * m / (n2[i] - m - 1) - y * m / (n1 - m - 1)) / sqrt(f_mu_var(m, n2[i], lbd2[j])[2] * m^2 / (n2[i] - m - 1)^2 + f_mu_var(m, n1, lbd1)[2] * m^2 / (n1 - m - 1)^2)
+    pvals <- pnorm(stats)
+    type_I_II_err[i, j] <- ifelse((lbd2[j] + m)/(n2[i] - m - 3) > (lbd1 + m)/(n1 - m - 3), sum(pvals < 1 - alp)/reps, sum(pvals > 1 - alp) / reps)
+    figs[[i]][[j]] <- hist(pvals, breaks = 20, plot = FALSE)
+    figs2[[i]][[j]] <- hist(stats, breaks = 20, plot = FALSE)
+    stats_vec <- c(stats_vec, stats)
+    
+  }
+}
+
+stats_df$stats <- stats_vec
+```
+
+```{r}
+print(type_I_II_err)
+```
+
+```{r}
+## Q-Q plots for statistics 
+ggplot(data = stats_df, aes(sample = stats, colour = factor(lbd))) + 
+  stat_qq() + stat_qq_line() +  facet_grid(. ~ n) + panel_border()
+```
+
+```{r}
+## 
+ecdf_res_all <- vector("list", length = length(n2))
+cols <- rainbow(length(n2))
+cols <- sapply(cols, function(x) paste(x, c("10", "20", "30", "40", "50", "60", ""), sep =""))
+for(i in 1:length(n2)){
+  ecdf_res_all[[i]] <- vector("list", length = length(lbd2))
+  for(j in 1:length(lbd2)){
+    ecdf_res <- ecdf(stats_df[stats_df$n == n2[i] & stats_df$lbd == lbd2[j], "stats"])
+    ecdf_res_all[[i]][[j]] <- cbind((knots(ecdf_res) - min(knots(ecdf_res)))/(max(knots(ecdf_res)) - min(knots(ecdf_res))), ecdf_res(knots(ecdf_res)))
+    if(i == 1 & j == 1){
+      plot(ecdf_res_all[[i]][[j]][, 1], ecdf_res_all[[i]][[j]][, 2], xlab = "Uniform", ylab = "Empirical", type = "l", col = cols[1]) 
+    }else{
+      lines(ecdf_res_all[[i]][[j]][, 1], ecdf_res_all[[i]][[j]][, 2], col = cols[(i-1) * length(lbd2) + j])
+    }
+  }
+}
+abline(a = 0, b = 1, col = 1, lty = 2)
+legnd <- c(sapply(1:length(n2), function(i) sapply(1:length(lbd2), function(j) paste(n2[i], " | ", lbd2[j], sep = ""))))
+legend("bottomright", legend = legnd, col = cols, pch = 1, ncol = length(n2), text.width = 0.06)
+```
+
+#### Adjust mean
+Consider $x\sim F_{m, n_1}(\lambda_x), y\sim F_{m, n_2}(\lambda_y)$. Under the null hypothesis $H0$, $$\frac{n_1 -m -1}{m} \times x = \frac{n_2 - m - 1}{m}\times y$$
+So we have 
+$$x = \frac{n_2 - m - 1}{n_1 - m - 1}y$$
+which gives a new statistic to test, 
+$$\frac{x -  \frac{n_2}{n_1}y}{\sqrt{\text{var}(x) + (\frac{n_2}{n1})^2\text{var}(y)}}$$
+```{r sample size adjust y, echo=FALSE, include=FALSE, eval=TRUE}
+m <- 10
+n1 <- 1000
+n2 <- c(100, 300, 500, 800, 1000, 1200, 1500, 1700, 2000)
+lbd1 <- 8
+lbd2 <- c(1, 3, 5, 8, 10, 13, 15)
+alp <- 0.05
+
+reps <- 5000
+type_I_II_err <- array(NA, dim = c(length(n2), length(lbd2)), dimnames = list(n2, lbd2))
+figs <- vector("list", length(n2))
+figs2 <- vector("list", length(n2))
+stats_df <- data.frame(n = integer(length(n2) * length(lbd2) * reps), lbd = double(length(n2) * length(lbd2) * reps), stats = double(length(n2) * length(lbd2) * reps))
+stats_df$n <- rep(n2, each = length(lbd2) * reps)
+stats_df$lbd <- rep(rep(lbd2, each = reps), length(n2))
+cols <- rainbow(length(n2), alpha = 0.7)
+stats_vec <- NULL
+
+
+par(mfrow = c(length(n2), length(lbd2)), mar = c(1, 1, 1, 1))
+for(i in 1:length(n2)){
+  figs[[i]] <- vector("list", length(lbd2))
+  figs2[[i]] <- vector("list", length(lbd2))
+  for (j in 1:length(lbd2)) {
+    y <- rf(reps, m, n1, lbd1)
+    x <- rf(reps, m, n2[i], lbd2[j])
+    stats <- (x - y * n2[i] / n1) / sqrt(f_mu_var(m, n2[i], lbd2[j])[2] + f_mu_var(m, n1, lbd1)[2] * n2[i]^2 / n1^2)
+    pvals <- pnorm(stats)
+    type_I_II_err[i, j] <- ifelse((lbd2[j] + m)/(n2[i] - m - 3) > (lbd1 + m)/(n1 - m - 3), sum(pvals < 1 - alp)/reps, sum(pvals > 1 - alp) / reps)
+    figs[[i]][[j]] <- hist(pvals, breaks = 20, plot = FALSE)
+    figs2[[i]][[j]] <- hist(stats, breaks = 20, plot = FALSE)
+    stats_vec <- c(stats_vec, stats)
+    
+  }
+}
+
+stats_df$stats <- stats_vec
+```
+
+```{r}
+print(type_I_II_err)
+```
+
+```{r}
+cols <- rainbow(length(lbd2), alpha = 0.7)
+for(i in 1:length(n2)){
+  plot(figs[[i]][[1]], col = cols[1], xlim = c(min(sapply(figs[[i]], function(x) min(x$breaks))), max(sapply(figs[[i]], function(x) max(x$breaks)))), main = paste("Histogram of p-values | n2 = ", n2[i], sep = ""))
+  for(j in 2:length(lbd2)){
+    plot(figs[[i]][[j]], col = cols[j], add = TRUE)
+  }
+  legend("topright", legend = lbd2, col = cols, lty = 1)
+}
+```
+
+
+```{r}
+for (i in 1:length(n2)) {
+  plot(figs2[[i]][[1]], col = cols[1], xlim = c(min(sapply(figs2[[i]], function(x) min(x$breaks))), max(sapply(figs2[[i]], function(x) max(x$breaks)))), main = paste("Histogram of statistics | n2 = ", n2[i], sep = ""))
+  for(j in 2:length(lbd2)){
+    plot(figs2[[i]][[j]], col = cols[j], add = TRUE)
+  }
+  legend("topright", legend = lbd2, col = cols, lty = 1)
+}
+
+```
+
+```{r}
+ggplot(data = stats_df, aes(sample = stats, colour = factor(lbd))) + 
+  stat_qq() + stat_qq_line() +  facet_grid(. ~ n) + panel_border()
+```
+
+```{r}
+## 
+ecdf_res_all <- vector("list", length = length(n2))
+cols <- rainbow(length(n2))
+cols <- sapply(cols, function(x) paste(x, c("10", "20", "30", "40", "50", "60", ""), sep =""))
+for(i in 1:length(n2)){
+  ecdf_res_all[[i]] <- vector("list", length = length(lbd2))
+  for(j in 1:length(lbd2)){
+    ecdf_res <- ecdf(stats_df[stats_df$n == n2[i] & stats_df$lbd == lbd2[j], "stats"])
+    ecdf_res_all[[i]][[j]] <- cbind((knots(ecdf_res) - min(knots(ecdf_res)))/(max(knots(ecdf_res)) - min(knots(ecdf_res))), ecdf_res(knots(ecdf_res)))
+    if(i == 1 & j == 1){
+      plot(ecdf_res_all[[i]][[j]][, 1], ecdf_res_all[[i]][[j]][, 2], xlab = "Uniform", ylab = "Empirical", type = "l", col = cols[1]) 
+    }else{
+      lines(ecdf_res_all[[i]][[j]][, 1], ecdf_res_all[[i]][[j]][, 2], col = cols[(i-1) * length(lbd2) + j])
+    }
+  }
+}
+abline(a = 0, b = 1, col = 1, lty = 2)
+legnd <- c(sapply(1:length(n2), function(i) sapply(1:length(lbd2), function(j) paste(n2[i], " | ", lbd2[j], sep = ""))))
+legend("bottomright", legend = legnd, col = cols, pch = 1, ncol = length(n2), text.width = 0.06)
+```
+
+#### Construct other testing statistics
+```{r}
+m <- 10
+n1 <- 1000
+n2 <- c(100, 300, 500, 800, 1000, 1200, 1500, 1700, 2000)
+lbd1 <- 8
+lbd2 <- c(1, 3, 5, 8, 10, 13, 15)
+alp <- 0.05
+
+reps <- 5000
+figs <- vector("list", length(n2))
+stats_df <- data.frame(n = integer(length(n2) * length(lbd2) * reps), lbd = double(length(n2) * length(lbd2) * reps), stats = double(length(n2) * length(lbd2) * reps))
+stats_df$n <- rep(n2, each = length(lbd2) * reps)
+stats_df$lbd <- rep(rep(lbd2, each = reps), length(n2))
+cols <- rainbow(length(n2), alpha = 0.7)
+stats_vec <- NULL
+
+
+par(mfrow = c(length(n2), length(lbd2)), mar = c(1, 1, 1, 1))
+for(i in 1:length(n2)){
+  figs[[i]] <- vector("list", length(lbd2))
+  figs2[[i]] <- vector("list", length(lbd2))
+  for (j in 1:length(lbd2)) {
+    y <- rf(reps, m, n1, lbd1)
+    x <- rf(reps, m, n2[i], lbd2[j])
+    stats <- x - y
+    figs[[i]][[j]] <- hist(stats, breaks = 20, plot = FALSE)
+    stats_vec <- c(stats_vec, stats)
+  }
+}
+stats_df$stats <- stats_vec
+```
+
+```{r}
+ggplot(data = stats_df, aes(sample = stats, colour = factor(lbd))) + 
+  stat_qq() + stat_qq_line() +  facet_grid(. ~ n) + panel_border()
+```
+
+```{r}
+## 
+ecdf_res_all <- vector("list", length = length(n2))
+cols <- rainbow(length(n2))
+cols <- sapply(cols, function(x) paste(x, c("10", "20", "30", "40", "50", "60", ""), sep =""))
+for(i in 1:length(n2)){
+  ecdf_res_all[[i]] <- vector("list", length = length(lbd2))
+  for(j in 1:length(lbd2)){
+    ecdf_res <- ecdf(stats_df[stats_df$n == n2[i] & stats_df$lbd == lbd2[j], "stats"])
+    ecdf_res_all[[i]][[j]] <- cbind((knots(ecdf_res) - min(knots(ecdf_res)))/(max(knots(ecdf_res)) - min(knots(ecdf_res))), ecdf_res(knots(ecdf_res)))
+    if(i == 1 & j == 1){
+      plot(ecdf_res_all[[i]][[j]][, 1], ecdf_res_all[[i]][[j]][, 2], xlab = "Uniform", ylab = "Empirical", type = "l", col = cols[1]) 
+    }else{
+      lines(ecdf_res_all[[i]][[j]][, 1], ecdf_res_all[[i]][[j]][, 2], col = cols[(i-1) * length(lbd2) + j])
+    }
+  }
+}
+abline(a = 0, b = 1, col = 1, lty = 2)
+legnd <- c(sapply(1:length(n2), function(i) sapply(1:length(lbd2), function(j) paste(n2[i], " | ", lbd2[j], sep = ""))))
+legend("bottomright", legend = legnd, col = cols, pch = 1, ncol = length(n2), text.width = 0.06)
+```
+
+Based on the shape of the empirical distribution of $x - y$, we can consider F distribution still. What we are of interest is $$E\left(\frac{R^2}{1-R^2}\right) = \frac{M + \lambda}{n - M - 3}$$
+Denote $\nu = E\left(\frac{R^2}{1-R^2}\right)$, then
+$$\lambda = (n - M - 3)\nu -M$$
+Let $\nu = \frac{x(n_1 - M - 1) + y(n_2 - M - 1)}{2M}$. Generate $$T_x \sim F_{m, n_1}(\nu \times n_1), T_y \sim F_{m, n_2}(\nu\times n_2)$$
+Use $T_x - T_y$ to generate the reference distribution. Compare the distribution of $x - y$ and $T_x - T_y$. 
+```{r}
+m <- 100
+n1 <- 1000
+n2 <- c(300, 500, 800, 1000, 1200, 1500, 1700, 2000, 5000, 10000)
+lbd1 <- 8
+lbd2 <- c(1, 3, 5, 8, 10, 13, 15)
+alp <- 0.05
+
+reps <- 10000
+figs <- vector("list", length(n2))
+pvals <- array(NA, dim = c(length(n2), length(lbd2), reps), dimnames = list(n2, lbd2, 1:reps))
+pvals_mu <- array(NA, dim = c(length(n2), length(lbd2)), dimnames = list(n2, lbd2))
+# stats_df <- data.frame(n = integer(length(n2) * length(lbd2) * reps), lbd = double(length(n2) * length(lbd2) * reps), stats = double(length(n2) * length(lbd2) * reps))
+# stats_df$n <- rep(n2, each = length(lbd2) * reps)
+# stats_df$lbd <- rep(rep(lbd2, each = reps), length(n2))
+cols <- rainbow(length(n2), alpha = 0.7)
+# stats_vec <- NULL
+
+par(mfrow = c(length(n2), length(lbd2)), mar = c(1, 1, 1, 1))
+for(i in 1:length(n2)){
+  figs[[i]] <- vector("list", length(lbd2))
+  figs2[[i]] <- vector("list", length(lbd2))
+  for (j in 1:length(lbd2)) {
+    y <- rf(reps, m, n1, lbd1)
+    x <- rf(reps, m, n2[i], lbd2[j])
+    stats <- x - y
+    
+    ## get distribution of Tx - Ty
+    nu <- (x * m / (n2[i] - m - 1) + y * m / (n1 - m - 1)) / 2
+    Ty <- sapply(nu, function(x) rf(reps, m, n1, max(0, x * (n1 - m - 3) - m)))  # reps x length(nu) = reps
+    Tx <- sapply(nu, function(x) rf(reps, m, n2[i], max(0, x * (n2[i] - m - 3) - m)))
+    
+    ## compare the distribution to get type I/II error
+    # qf_idx <- sapply(1:reps, function(i) quantile(Tx[, i] - Ty[, i], 1- alp))
+    pvals[i, j, ] <- sapply(1:reps, function(x) sum(stats[i] < (Tx[, i] - Ty[, i])) / reps)
+    # type_I_II_err[i, j] <- ifelse((lbd2[j] + m)/(n2[i] - m - 3) > (lbd1 + m)/(n1 - m - 3), sum(pvals < 1 - alp)/reps, sum(pvals > 1 - alp) / reps)
+    pvals_mu[i, j] <- mean(pvals[i, j, ])
+    
+    ## generate figures
+    # figs[[i]][[j]] <- hist(stats, breaks = 20, plot = FALSE)
+    # stats_vec <- c(stats_vec, stats)
+  }
+}
+# stats_df$stats <- stats_vec
+```
+
+```{r}
+print(pvals_mu)
+```
+
+## Without Normality Assumption
+
+### When y is continuous 
+```{r non-normal, echo=FALSE, eval=TRUE, include=FALSE}
+reps <- 5000
+m <- 10
+n1 <- 1000
+n2_vec <- c(100, 300, 500, 800, 1000, 1200, 1500, 1700, 2000)
+
+stat1 <- array(NA, dim = c(reps, length(n2_vec)), dimnames = list(1:reps, n2_vec))
+stat2 <- array(NA, dim = c(reps, length(n2_vec)), dimnames = list(1:reps, n2_vec))
+
+for (i in 1:length(n2_vec)) {
+  for(j in 1:reps){
+    ## data generation
+    set.seed(1025 * i + 1992 * j)
+    n2 <- n2_vec[i]
+    G1 <- matrix(rnorm(n1 * m), ncol = m, nrow = n1)
+    G2 <- matrix(rnorm(n2 * m), ncol = m, nrow = n2)
+    beta_xg <- c(rep(1, 6), rep(0, 5))
+    beta_YX <- c(1, 1)
+    X1 <- cbind(1, G1) %*% matrix(beta_xg, ncol = 1) + rnorm(n1)
+    X2 <- cbind(1, G2) %*% matrix(beta_xg, ncol = 1) + rnorm(n2)
+    y1 <- cbind(1, X1) %*% matrix(beta_YX, ncol = 1) + rnorm(n1)
+    y2 <- cbind(1, X2) %*% matrix(beta_YX, ncol = 1) + rnorm(n2)
+  
+    ## Two way linear regression
+    ### X -> Y
+    lm1 <- lm(X1 ~ G1)
+    lm2 <- lm(y2 ~ G2)
+    Rsq_xg <- summary(lm1)$r.squared
+    Rsq_yg <- summary(lm2)$r.squared
+    
+    ### Y -> X
+    lm1.2 <- lm(y1 ~ G1)
+    lm2.2 <- lm(X2 ~ G2)
+    Rsq_yg.2 <- summary(lm1.2)$r.squared
+    Rsq_xg.2 <- summary(lm2.2)$r.squared
+  
+    var1.1 <- 4 * Rsq_xg * (1 - Rsq_xg)^2 * (n1 - m - 1)^2 / ((n1^2 - 1) * (n1 + 3))
+    var1.2 <- 4 * Rsq_yg * (1 - Rsq_yg)^2 * (n2 - m - 1)^2 / ((n2^2 - 1) * (n2 + 3))
+    var1 <- var1.1 + var1.2
+  
+    var2.1 <- 4 * Rsq_yg.2 * (1 - Rsq_yg.2)^2 * (n1 - m - 1)^2 / ((n1^2 - 1) * (n1 + 3))
+    var2.2 <- 4 * Rsq_xg.2 * (1 - Rsq_xg.2)^2 * (n2 - m - 1)^2 / ((n2^2 - 1) * (n2 + 3))
+    var2 <- var2.1 + var2.2
+  
+    stat1[j, i] <- (Rsq_xg - Rsq_yg) / sqrt(var1)
+    stat2[j, i] <- (Rsq_xg.2 - Rsq_yg.2) / sqrt(var2)
+  }
+}
+```
+
+Based on the Q-Q plots, we can tell 
+
+```{r}
+par(mfrow = c(1, 2))
+for(i in 1:length(n2_vec)){
+  qqnorm(stat1[, i])
+  qqline(stat1[, i], col = 2, lty = 2)
+  
+  qqnorm(stat2[, i])
+  qqline(stat2[, i], col = 2, lty = 2)
+}
+```
+
+```{r}
+figs <- lapply(1:length(n2_vec), function(i) hist(stat1[, i], breaks = 20, plot = FALSE))
+figs2 <- lapply(1:length(n2_vec), function(i) hist(stat2[, i], breaks = 20, plot = FALSE))
+
+cols.1 <- heat.colors(length(n2_vec), alpha = 0.5)
+cols.2 <- terrain.colors(length(n2_vec), alpha = 0.5)
+ymax <- max(sapply(1:length(n2_vec), function(i) max(figs[[i]]$count)))
+for(i in 1:length(n2_vec)){
+  if(i == 1){
+    plot(figs[[i]], col = cols.1[i], xlab = "statistics", xlim = c(min(stat1), max(stat1)), ylim = c(0, ymax), main = "Histogram of statistics")
+  }else{
+    plot(figs[[i]], col = cols.1[i], add = TRUE)
+  }
+  plot(figs2[[i]], col = cols.2[i], add = TRUE)
+}
+legnds <- c(t(sapply(1:length(n2_vec), function(i) paste(c("xy", "yx"), "| n = ", n2_vec[i]))))
+legend("topright", legend = legnds, col = c(cols.1, cols.2), pch = 16, text.width = 1.2, ncol = 2)
+
+alp <- 0.05
+type_I_II_err.1 <- sapply(1:length(n2_vec), function(i) sum(stat1[, i] > qnorm(1 - alp)) / reps)
+type_I_II_err.2 <- sapply(1:length(n2_vec), function(i) sum(stat2[, i] > qnorm(1 - alp)) / reps)
+
+cbind(type_I_II_err.1, type_I_II_err.2)
+```
+
+
+#### when y is binary
+```{r non-normal, echo=FALSE, eval=TRUE, include=FALSE}
+reps <- 1000
+m <- 50
+n_sign <- 5
+n1 <- 1000
+n2_vec <- c(500, 800, 1000, 1200, 1500, 1700, 2000)
+
+stat1 <- array(NA, dim = c(reps, length(n2_vec)), dimnames = list(1:reps, n2_vec))
+stat2 <- array(NA, dim = c(reps, length(n2_vec)), dimnames = list(1:reps, n2_vec))
+
+for (i in 1:length(n2_vec)) {
+  for(j in 1:reps){
+    ## data generation
+    set.seed(1025 * i + 1992 * j)
+    n2 <- n2_vec[i]
+    G1 <- matrix(rnorm(n1 * m), ncol = m, nrow = n1)
+    G2 <- matrix(rnorm(n2 * m), ncol = m, nrow = n2)
+    beta_xg <- c(rep(1, n_sign + 1), rep(0, m - n_sign))
+    beta_YX <- c(1, 1)
+    X1 <- scale(cbind(1, G1) %*% matrix(beta_xg, ncol = 1) + rnorm(n1), center = T, scale = T)
+    X2 <- scale(cbind(1, G2) %*% matrix(beta_xg, ncol = 1) + rnorm(n2), center = T, scale = T)
+    # y1 <- scale(1 / (1 + exp( - cbind(1, X1) %*% matrix(beta_YX, ncol = 1))) + rnorm(n1), center = T, scale = T)
+    # y2 <- scale(1 / (1 + exp( - cbind(1, X2) %*% matrix(beta_YX, ncol = 1))) + rnorm(n2), center = T, scale = T)
+    y1 <- (1 / (1 + exp( - cbind(1, X1) %*% matrix(beta_YX, ncol = 1))) + rnorm(n1) > 0.5) * 1
+    y2 <- (1 / (1 + exp( - cbind(1, X2) %*% matrix(beta_YX, ncol = 1))) + rnorm(n2) > 0.5) * 1
+  
+    ## Two way linear regression
+    ### X -> Y
+    lm1 <- lm(X1 ~ G1)
+    lm2 <- lm(y2 ~ G2)
+    Rsq_xg <- summary(lm1)$r.squared
+    Rsq_yg <- cor(y2, lm2$fitted.values)
+    
+    ### Y -> X
+    lm1.2 <- lm(y1 ~ G1)
+    lm2.2 <- lm(X2 ~ G2)
+    Rsq_yg.2 <- summary(lm1.2)$r.squared
+    Rsq_xg.2 <- cor(X2, lm2$fitted.values)
+  
+    var1.1 <- 4 * Rsq_xg * (1 - Rsq_xg)^2 * (n1 - m - 1)^2 / ((n1^2 - 1) * (n1 + 3))
+    var1.2 <- 4 * Rsq_yg * (1 - Rsq_yg)^2 * (n2 - m - 1)^2 / ((n2^2 - 1) * (n2 + 3))
+    var1 <- var1.1 + var1.2
+  
+    var2.1 <- 4 * Rsq_yg.2 * (1 - Rsq_yg.2)^2 * (n1 - m - 1)^2 / ((n1^2 - 1) * (n1 + 3))
+    var2.2 <- 4 * Rsq_xg.2 * (1 - Rsq_xg.2)^2 * (n2 - m - 1)^2 / ((n2^2 - 1) * (n2 + 3))
+    var2 <- var2.1 + var2.2
+  
+    stat1[j, i] <- (Rsq_xg - Rsq_yg) / sqrt(var1)
+    stat2[j, i] <- (Rsq_xg.2 - Rsq_yg.2) / sqrt(var2)
+  }
+}
+```
+
+```{r}
+par(mfrow = c(1, 2))
+for(i in 1:length(n2_vec)){
+  qqnorm(stat1[, i])
+  qqline(stat1[, i], col = 2, lty = 2)
+  
+  qqnorm(stat2[, i])
+  qqline(stat2[, i], col = 2, lty = 2)
+}
+```
+
+```{r}
+figs <- lapply(1:length(n2_vec), function(i) hist(stat1[, i], breaks = 20, plot = FALSE))
+figs2 <- lapply(1:length(n2_vec), function(i) hist(stat2[, i], breaks = 20, plot = FALSE))
+
+par(mfrow = c(1, 1))
+cols.1 <- heat.colors(length(n2_vec), alpha = 0.5)
+cols.2 <- terrain.colors(length(n2_vec), alpha = 0.5)
+ymax <- max(sapply(1:length(n2_vec), function(i) max(figs[[i]]$count)))
+for(i in 1:length(n2_vec)){
+  if(i == 1){
+    plot(figs[[i]], col = cols.1[i], xlab = "statistics", xlim = c(min(stat1), max(stat1)), ylim = c(0, ymax), main = "Histogram of statistics")
+  }else{
+    plot(figs[[i]], col = cols.1[i], add = TRUE)
+  }
+  plot(figs2[[i]], col = cols.2[i], add = TRUE)
+}
+legnds <- c(t(sapply(1:length(n2_vec), function(i) paste(c("xy", "yx"), "| n = ", n2_vec[i]))))
+legend("topright", legend = legnds, col = c(cols.1, cols.2), pch = 16, text.width = 1.2, ncol = 2)
+
+alp <- 0.05
+power.1 <- sapply(1:length(n2_vec), function(i) sum(stat1[, i] > qnorm(1 - alp)) / reps)
+power.2 <- sapply(1:length(n2_vec), function(i) sum(stat2[, i] > qnorm(1 - alp)) / reps)
+
+cbind(power.1, power.2)
+```
+
+```{r}
+par(mfrow = c(length(n2_vec), 2), mar = c(1, 1, 1, 1))
+for(i in 1:length(n2_vec)){
+  if(i == 1){
+    plot(figs[[i]], col = cols.1[i], xlab = "statistics", xlim = c(min(stat1), max(stat1)), ylim = c(0, ymax), main = "Histogram of statistics, x -> y")
+    plot(figs2[[i]], col = cols.2[i], xlab = "statistics", xlim = c(min(stat1), max(stat1)), ylim = c(0, ymax), main = "Histogram of statistics, y -> x")
+  }else{
+    plot(figs[[i]], col = cols.1[i], xlab = "statistics", xlim = c(min(stat1), max(stat1)), ylim = c(0, ymax), main = NULL)
+    plot(figs2[[i]], col = cols.2[i], xlab = "statistics", xlim = c(min(stat1), max(stat1)), ylim = c(0, ymax), main = NULL)
+  }
+}
+
+
+```
+
+
