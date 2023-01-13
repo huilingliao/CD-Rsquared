@@ -12,13 +12,12 @@
 #'@param effect.size.X effect size for X
 #'@param split.r sample split ratio, n2 = r x n1
 genData <- function(oriSNP, u.sd, num.sample, sample.type = 'sample', mdl2.type, sigma_Y, 
-                    stage1_mdl, stage2_mdl, stage2_mdl_null, effect.size.U, effect.size.X, split.r = 1, setseed = 1025) {
+                    stage1_mdl, stage2_mdl, stage2_mdl_null, effect.size.U, effect.size.X, split.r = 1, direction = "XtoY", setseed = 1025) {
   # get original dataset size
   n0 <- nrow(oriSNP)
   
   # sample U ~ N(0, hat_u_sd)
   set.seed(setseed)
-  
   
   # sample with replacement to get SNPs
   if(sample.type == 'sample') {
@@ -56,18 +55,29 @@ genData <- function(oriSNP, u.sd, num.sample, sample.type = 'sample', mdl2.type,
       y <- cbind(1, X, U) %*% matrix(stage2_mdl$coefficients * c(1, effect.size.X, effect.size.U), ncol = 1) + rnorm(num.sample, 0, sigma_Y)
     }
   }
-  
-  
+
   # get datasets for two stages
-  simulated_data <- data.frame(Y = y, X = X, SNP = SNPs)
-  colnames(simulated_data)[3:ncol(simulated_data)] <- colnames(oriSNP)
   n1 <- floor(nall / (1 + split.r))
-  n2 <- nall - n1
   idx1 <- sample(nall, n1)
   idx2 <- setdiff(1:nall, idx1)
-  stage1.df <- simulated_data[idx1, ]
-  stage2.df <- simulated_data[idx2, ]
-  
+
+  y1 <- scale(y[idx1], scale = FALSE)
+  y2 <- scale(y[idx2], scale = FALSE)
+  X1 <- scale(X[idx1], scale = FALSE)
+  X2 <- scale(X[idx2], scale = FALSE)
+  SNP1 <- scale(SNPs[idx1, ], scale = FALSE)
+  SNP2 <- scale(SNPs[idx2, ], scale = FALSE)
+
+  if (direction == "XtoY") {
+    stage1.df <- data.frame(Y = y1, X = X1, SNP = SNP1)
+    stage2.df <- data.frame(Y = y2, X = X2, SNP = SNP2)
+  }else{
+    stage1.df <- data.frame(Y = X1, X = y1, SNP = SNP1)
+    stage2.df <- data.frame(Y = X2, X = y2, SNP = SNP2)
+  }
+  colnames(stage1.df)[3:ncol(stage1.df)] <- colnames(oriSNP)
+  colnames(stage2.df)[3:ncol(stage2.df)] <- colnames(oriSNP)
+
   return(list(stage1.df = stage1.df,
               stage2.df = stage2.df))
 }
@@ -81,14 +91,14 @@ genData <- function(oriSNP, u.sd, num.sample, sample.type = 'sample', mdl2.type,
 #'@param lbd1 noncentrality parameter for stage 1 regression
 #'@param lbd2 noncentrality parameter for stage 2 regression
 #'@param num.sample number of samples for bootstrap
-fTest <- function(rx2, ry2, M, n1, n2, lbd1, lbd2, num.sample) {
+fTest <- function(rx2, ry2, M, n1, n2, lbd1, lbd2, num.sample = 10000) {
   statx <- rx2 * (n1 - M - 1) / ((1 - rx2) * M)
   staty <- ry2 * (n2 - M - 1) / ((1 - ry2) * M)
-  nu1 <- max(0, (statx * M - M) / n1)
-  nu2 <- max(0, (staty * M - M) / n2)
-  # nu <- 0.5 * (lbd1 / n1 + lbd2 / n2)
-  lbdx <- nu1 * n1
-  lbdy <- nu2 * n2
+  # nu1 <- max(0, (statx * M - M) / n1)
+  # nu2 <- max(0, (staty * M - M) / n2)
+  nu <- 0.5 * (lbd1 / n1 + lbd2 / n2)
+  lbdx <- nu * n1 # nu1 * n1
+  lbdy <- nu * n2 # nu2 * n2
   
   Tx <- rf(num.sample, M, n1 - M - 1, lbdx)
   Ty <- rf(num.sample, M, n2 - M - 1, lbdy)
@@ -97,7 +107,6 @@ fTest <- function(rx2, ry2, M, n1, n2, lbd1, lbd2, num.sample) {
   TnuY <- (Ty * M - M) / n2
   
   pval_xy <- mean(Tx < Ty)
-  
   # pval_xy <- mean(statx - staty < Tx - Ty)
   # pval_yx <- mean(staty - statx < Ty - Tx)
   return(list(test.stat = statx - staty, pval = pval_xy))
