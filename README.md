@@ -1,1 +1,1 @@
-# Inferring Causal Direction using Coefficient of Determination R^2
+# Inferring Causal Direction using R2
